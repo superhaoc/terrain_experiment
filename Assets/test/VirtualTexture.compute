@@ -1,0 +1,120 @@
+#pragma kernel PackFeedbackIntoUint
+#pragma kernel Deduplicate
+#pragma kernel UpdatePageTable
+
+#include "./BitonicSort_jp.hlsl"
+#include "./VirtualTexture.hlsl"
+
+Texture2D<float4> RequestTexture;
+AppendStructuredBuffer<uint> _UniqueKeys; 
+
+
+//update for pagetable
+RWTexture2D<float4> _pageTableTex_mip0;
+RWTexture2D<float4> _pageTableTex_mip1;
+RWTexture2D<float4> _pageTableTex_mip2;
+RWTexture2D<float4> _pageTableTex_mip3;
+RWTexture2D<float4> _pageTableTex_mip4;
+RWTexture2D<float4> _pageTableTex_mip5;
+RWTexture2D<float4> _pageTableTex_mip6;
+RWTexture2D<float4> _pageTableTex_mip7;
+RWTexture2D<float4> _pageTableTex_mip8;
+RWTexture2D<float4> _pageTableTex_mip9;
+RWTexture2D<float4> _pageTableTex_mip10;
+
+
+
+
+[numthreads(8, 8, 1)]
+void PackFeedbackIntoUint(uint3 id : SV_DispatchThreadID) {
+    uint2 xy = id.xy;
+    uint2 texSize;
+    RequestTexture.GetDimensions(texSize.x, texSize.y);
+    // 读取反馈样本
+    float4 rgba = RequestTexture[xy].rgba;
+    uint mip;
+    uint2 pageID;
+    decodePageIDMip(rgba,mip,pageID);
+
+    uint idx = id.y * texSize.x + id.x;
+
+    _Data[idx] =  (mip << 24) | (pageID.y << 12) | pageID.x;
+}
+
+uint _DataLength;  // C# 传入总长度
+#define BLOCK_SIZE 4
+
+[numthreads(64, 1, 1)]
+void Deduplicate(uint3 id : SV_DispatchThreadID) {
+    
+    uint startIdx = id.x * BLOCK_SIZE;
+    if (startIdx >= _DataLength) return;
+    // 线程负责处理 [startIdx, end) 这个区间
+    uint endIdx = min(startIdx + BLOCK_SIZE, _DataLength);
+
+    for (uint i = startIdx; i < endIdx; ++i) {
+        uint cur = _Data[i];
+        if ((i == 0 || cur != _Data[i - 1]) && (cur & 0x80000000) ) {
+            cur &= ~0x80000000;
+            _UniqueKeys.Append(cur);
+        }
+    }
+
+}
+
+
+#define TotalThreadCount 1024
+[numthreads(8,8,1)]
+void UpdatePageTable(uint3 id : SV_DispatchThreadID){
+     PageTableReq updateItem = (PageTableReq)0;
+     uint2 idxy = id.xy;
+     RWTexture2D<float4> _pageTableTex_mips;
+
+     [unroll]
+     for(int m = updateItem.mip; m >= 0; --m){
+
+        uint blockSize = 1 << (updateItem.mip - m);
+        uint x0 = updateItem.pageCoord.x << (updateItem.mip - m);
+        uint y0 = updateItem.pageCoord.y << (updateItem.mip - m);
+
+        if(m == 0)
+            _pageTableTex_mips = _pageTableTex_mip0;
+        else if(m == 1)
+            _pageTableTex_mips = _pageTableTex_mip1;
+        else if(m == 2)
+            _pageTableTex_mips = _pageTableTex_mip2;
+        else if(m == 3)
+            _pageTableTex_mips = _pageTableTex_mip3;
+        else if(m == 4)
+            _pageTableTex_mips = _pageTableTex_mip4;
+        else if(m == 5)
+            _pageTableTex_mips = _pageTableTex_mip5;
+        else if(m == 6)
+            _pageTableTex_mips = _pageTableTex_mip6;
+        else if(m == 7)
+            _pageTableTex_mips = _pageTableTex_mip7;
+        else if(m == 8)
+            _pageTableTex_mips = _pageTableTex_mip8;
+        else if(m == 9)
+            _pageTableTex_mips = _pageTableTex_mip9;
+        else
+            _pageTableTex_mips = _pageTableTex_mip10;
+
+
+                      
+        uint2 loc = uint2(x0,y0) +  floor(1.0 * idxy * blockSize / TotalThreadCount);
+        uint2 physPageIdx;
+        uint mipLevel;
+
+        decodePageTableEntry(_pageTableTex_mips[loc].rgba,physPageIdx,mipLevel);
+        
+        if(mipLevel > updateItem.mip && all(floor((idxy + 1) / exp2(m))))
+        {
+            float4 rgba = encodePageTableEntry(updateItem.mip,updateItem.phyPageCoord);
+           _pageTableTex_mips[loc] = rgba; 
+        }
+        
+        
+     }
+
+}

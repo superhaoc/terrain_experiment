@@ -1,0 +1,30 @@
+
+// #pragma kernel PatchMinMaxHeight
+// #pragma kernel PatchMinMaxHeightMapMip
+
+// Texture2D<float4> HeightTex;
+// RWTexture2D<float4> PatchMinMaxHeightTex;
+
+
+// [numthreads(8,8,1)]
+// void PatchMinMaxHeight (uint3 id : SV_DispatchThreadID)
+// {
+//     float h1 = HeightTex[id.xy].r;
+//     PatchMinMaxHeightTex[id.xy].rgba = float4(h1,h1,0,1);
+// }
+
+// Texture2D<float4> InTex;
+// RWTexture2D<float4> ReduceTex;
+// [numthreads(8,8,1)]
+// void PatchMinMaxHeightMapMip(uint3 id : SV_DispatchThreadID){
+
+//     uint2 inLoc = id.xy * 2;
+//     float2 h1 = InTex[inLoc].rg;
+//     float2 h2 = InTex[inLoc + uint2(1,0)].rg;
+//     float2 h3 = InTex[inLoc + uint2(0,1)].rg;
+//     float2 h4 = InTex[inLoc + uint2(1,1)].rg;
+
+//     float hmin = min(min(h1.r,h2.r),min(h3.r,h4.r));
+//     float hmax = max(max(h1.g,h2.g),max(h3.g,h4.g));
+//     ReduceTex[id.xy] = float4(hmin,hmax,0,1);
+// }   

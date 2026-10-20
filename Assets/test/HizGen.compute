@@ -1,0 +1,71 @@
+// HiZGen.compute
+#pragma kernel InitHiZ
+#pragma kernel HiZReduce
+
+// 输入：全分辨率深度纹理
+Texture2D<float> _CameraDepthTexture;
+
+// 输出：HiZ 纹理（带 mipmap）
+RWTexture2D<float> _HiZTexture;
+
+RWTexture2D<float> _HiSrcZTexture;
+RWTexture2D<float> _HiZDstTexture;
+
+
+float2 _SrcSize;
+float2 _DstSize;
+uint2 _SrcMipSize;      // 当前源 mip 的尺寸（宽高）
+
+
+// 取 2x2 块的最大值（用于 HiZ 下采样）
+float GetMaxDepth(float4 depths)
+{
+    //#if _REVERSE_Z   
+        return min(min(depths.x, depths.y),min(depths.z, depths.w)); 
+    // #else     
+    //     return max(max(depths.x, depths.y), max(depths.z, depths.w));
+    // #endif 
+
+}
+
+[numthreads(8, 8, 1)]
+void InitHiZ(uint3 id : SV_DispatchThreadID)
+{
+     if (id.x >= _DstSize.x || id.y >= _DstSize.y)
+         return;
+    uint2 srcUV = floor(id.xy / _DstSize.xy * _SrcSize.xy);
+    float depth = _CameraDepthTexture.Load(uint3(srcUV, 0));
+
+    // if(depth == 0.0 && srcUV.y == 0)
+    // depth = 1.0;
+    _HiZTexture[id.xy] = depth;
+}
+
+[numthreads(8, 8, 1)]
+void HiZReduce(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _DstSize.x || id.y >= _DstSize.y)
+        return;
+
+uint2 srcSize = _SrcMipSize;
+
+    uint2 uv00 = id.xy * 2;
+    uint2 uv10 = uv00 + uint2(1, 0);
+    uint2 uv01 = uv00 + uint2(0, 1);
+    uint2 uv11 = uv00 + uint2(1, 1);
+
+    // 强制钳位到有效范围
+    uv00 = min(uv00, srcSize - 1);
+    uv10 = min(uv10, srcSize - 1);
+    uv01 = min(uv01, srcSize - 1);
+    uv11 = min(uv11, srcSize - 1);
+
+    float d00 = _HiSrcZTexture.Load(uint3(uv00, 0));
+    float d10 = _HiSrcZTexture.Load(uint3(uv10, 0));
+    float d01 = _HiSrcZTexture.Load(uint3(uv01, 0));
+    float d11 = _HiSrcZTexture.Load(uint3(uv11, 0));
+
+    float maxDepth = GetMaxDepth(float4(d00, d10, d01, d11));
+    
+    _HiZDstTexture[id.xy] = maxDepth;
+}

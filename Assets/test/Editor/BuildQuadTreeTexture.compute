@@ -1,0 +1,111 @@
+#pragma kernel PatchMinMaxHeight
+#pragma kernel PatchMinMaxHeightMapMip
+
+
+#pragma kernel BuildQuadTreeTexture0
+#pragma kernel BuildQuadTreeTexture1
+#pragma kernel BuildQuadTreeTexture2
+#pragma kernel BuildQuadTreeTexture3
+#pragma kernel BuildQuadTreeTexture4
+#pragma kernel BuildQuadTreeTexture5
+#include "./../Common.hlsl"
+
+#define SECTOR_SIZE 64.0f
+#define WORLD_SECTORS 160
+#define MAX_LOD 5
+
+RWTexture2D<uint>  _QuadTreeMip;
+RWStructuredBuffer<NodeDescription> _Nodes;
+
+// 为每个 mip 层级定义独立的 BuildQuadTreeTexture 内核
+#define DEFINE_BUILD_QUAD_TREE_KERNEL(mip) \
+[numthreads(64,1,1)] \
+void BuildQuadTreeTexture##mip(uint3 id : SV_DispatchThreadID) \
+{ \
+    uint nodeIdx = id.x; \
+    if (nodeIdx >= _NodeCount) return; \
+    NodeDescription node = _Nodes[nodeIdx]; \
+    \
+    /* 筛选对应 LOD 的节点：mip = MAX_LOD - node.lod */ \
+    if (node.lod !=  MAX_LOD - mip) return; \
+    \
+    /* 节点中心对应的扇区坐标（浮点） */ \
+    float2 minSector = (node.center - node.halfSize) / SECTOR_SIZE; \
+    \
+    /* 当前 mip 每个纹素覆盖的扇区数 = 2^mip */ \
+    float sectorsPerTexel = pow(2.0, mip); \
+    \
+    /* 纹素坐标 = 扇区坐标 / sectorsPerTexel 取整 */ \
+    int2 texCoord = int2(floor(minSector / sectorsPerTexel)); \
+    \
+    /* 纹理尺寸 = WORLD_SECTORS >> mip */ \
+    int texSize = WORLD_SECTORS >> mip; \
+    if (texCoord.x < 0 || texCoord.x >= texSize || texCoord.y < 0 || texCoord.y >= texSize) \
+            return; \
+     _QuadTreeMip[texCoord] = nodeIdx; \
+}
+
+// 生成6个内核,对应不同的mipmap级别
+DEFINE_BUILD_QUAD_TREE_KERNEL(0)
+DEFINE_BUILD_QUAD_TREE_KERNEL(1)
+DEFINE_BUILD_QUAD_TREE_KERNEL(2)
+DEFINE_BUILD_QUAD_TREE_KERNEL(3)
+DEFINE_BUILD_QUAD_TREE_KERNEL(4)
+DEFINE_BUILD_QUAD_TREE_KERNEL(5)
+
+
+
+
+
+
+Texture2D<float4> HeightTex;
+RWTexture2D<float4> PatchMinMaxHeightTex;
+
+#define ORIGINALHEIGHTSIZE 1280
+
+[numthreads(8,8,1)]
+void PatchMinMaxHeight (uint3 id : SV_DispatchThreadID,uint3 groupThreadId:SV_GroupThreadID)
+{
+
+    // uint2 inLoc1 = clamp(id.xy ,0,ORIGINALHEIGHTSIZE-1);
+    // uint2 inLoc2 = id.xy - groupThreadId.xy +(uint2(1,0) + groupThreadId.xy)%2;
+    // uint2 inLoc3 = id.xy - groupThreadId.xy+(uint2(1,1) + groupThreadId.xy)%2;
+    // uint2 inLoc4 = id.xy - groupThreadId.xy+(uint2(0,1) + groupThreadId.xy)%2;
+
+    // float h1 = HeightTex[inLoc1].r;
+    // float h2 = HeightTex[inLoc2].r;
+    // float h3 = HeightTex[inLoc3].r;
+    // float h4 = HeightTex[inLoc4].r;
+
+    // float hmin = min(min(h1,h2),min(h3,h4));
+    // float hmax = max(max(h1,h2),max(h3,h4));
+    // PatchMinMaxHeightTex[id.xy].rgba = float4(hmin,hmax,0,1);
+
+    // float h1 = HeightTex[id.xy].r;
+    // PatchMinMaxHeightTex[id.xy].rgba = float4(h1,h1,0,1);
+
+    float h1 = HeightTex[id.xy].r;
+    float h2 = HeightTex[id.xy + uint2(1,0)].r;
+    float h3 = HeightTex[id.xy + uint2(0,1)].r;
+    float h4 = HeightTex[id.xy + uint2(1,1)].r;
+
+    float hmin = min(min(h1,h2),min(h3,h4));
+    float hmax = max(max(h1,h2),max(h3,h4));
+    PatchMinMaxHeightTex[id.xy].rgba = float4(hmin,hmax,0,1);
+}
+
+Texture2D<float4> InTex;
+RWTexture2D<float4> ReduceTex;
+[numthreads(8,8,1)]
+void PatchMinMaxHeightMapMip(uint3 id : SV_DispatchThreadID){
+
+    uint2 inLoc = id.xy * 2;
+    float2 h1 = InTex[inLoc].rg;
+    float2 h2 = InTex[inLoc + uint2(1,0)].rg;
+    float2 h3 = InTex[inLoc + uint2(0,1)].rg;
+    float2 h4 = InTex[inLoc + uint2(1,1)].rg;
+
+    float hmin = min(min(h1.r,h2.r),min(h3.r,h4.r));
+    float hmax = max(max(h1.g,h2.g),max(h3.g,h4.g));
+    ReduceTex[id.xy] = float4(hmin,hmax,0,1);
+}   

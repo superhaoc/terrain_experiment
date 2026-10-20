@@ -1,0 +1,84 @@
+
+#pragma kernel HiZReduce
+
+
+
+//1024 x 1024 需要5次dispatcch
+
+Texture2D<float> _HiTextureInput;
+RWTexture2D<float> _HiZTextureMip0;
+RWTexture2D<float> _HiZTextureMip1;
+RWTexture2D<float> _HiZTextureMip2;
+
+RWTexture2D<float> _HiTextureOuput;
+
+
+groupshared float hiz_shared_0[4][4];
+groupshared float hiz_shared_1[2][2];
+
+
+
+
+float4 _SrcDstSize;
+
+
+// 取 2x2 块的最大值（用于 HiZ 下采样）
+float GetMaxDepth(float4 depths)
+{
+    
+    return min(min(depths.x, depths.y),min(depths.z, depths.w)); 
+}
+
+
+[numthreads(4, 4, 1)]
+void HiZReduce(uint3 id : SV_DispatchThreadID,uint3 inInThreadGroup : SV_GroupThreadID)
+{
+    
+
+    uint2 srcUV = floor(id.xy / _SrcDstSize.zw * _SrcDstSize.xy);
+    float depth = _HiTextureInput.Load(uint3(srcUV, 0));
+    _HiZTextureMip0[id.xy] = depth;
+
+    hiz_shared_0[inInThreadGroup.x][inInThreadGroup.y] = depth;
+
+    GroupMemoryBarrierWithGroupSync();
+
+
+    //mip1
+    uint2 groupLoc = inInThreadGroup.xy >> 1;
+    uint2 uv00 = groupLoc * 2;
+    uint2 uv10 = uv00 + uint2(1, 0);
+    uint2 uv01 = uv00 + uint2(0, 1);
+    uint2 uv11 = uv00 + uint2(1, 1);
+
+    float d00 = hiz_shared_0[uv00.x][uv00.y];
+    float d10 = hiz_shared_0[uv10.x][uv10.y];// _HiSrcZTexture.Load(uint3(uv10, 0));
+    float d01 = hiz_shared_0[uv01.x][uv01.y];//_HiSrcZTexture.Load(uint3(uv01, 0));
+    float d11 = hiz_shared_0[uv11.x][uv11.y];//_HiSrcZTexture.Load(uint3(uv11, 0));
+
+    float maxDepth = GetMaxDepth(float4(d00, d10, d01, d11));
+    hiz_shared_1[groupLoc.x][groupLoc.y] = maxDepth;
+    _HiZTextureMip1[id.xy >> 1] = maxDepth;
+
+
+
+    GroupMemoryBarrierWithGroupSync();
+
+    //mip2
+
+    groupLoc = inInThreadGroup.xy >> 2;
+    uv00 = groupLoc * 2;
+    uv10 = uv00 + uint2(1, 0);
+    uv01 = uv00 + uint2(0, 1);
+    uv11 = uv00 + uint2(1, 1);
+
+    d00 = hiz_shared_1[uv00.x][uv00.y];
+    d10 = hiz_shared_1[uv10.x][uv10.y];// _HiSrcZTexture.Load(uint3(uv10, 0));
+    d01 = hiz_shared_1[uv01.x][uv01.y];//_HiSrcZTexture.Load(uint3(uv01, 0));
+    d11 = hiz_shared_1[uv11.x][uv11.y];//_HiSrcZTexture.Load(uint3(uv11, 0));
+
+    maxDepth = GetMaxDepth(float4(d00, d10, d01, d11));
+
+    _HiZTextureMip2[id.xy >> 2] = maxDepth;
+
+}
